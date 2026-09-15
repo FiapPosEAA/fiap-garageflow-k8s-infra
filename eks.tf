@@ -5,8 +5,7 @@ module "eks" {
   name               = "garage_flow_eks"
   kubernetes_version = "1.33"
 
-  endpoint_public_access = true
-
+  endpoint_public_access                   = true
   enable_cluster_creator_admin_permissions = true
 
   compute_config = {
@@ -24,7 +23,7 @@ module "eks" {
 
   tags = {
     Environment = "Prod"
-    Tenant     = "fiap"
+    Tenant      = "fiap"
     Terraform   = "true"
   }
 }
