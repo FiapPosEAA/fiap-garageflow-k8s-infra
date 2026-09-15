@@ -1,7 +1,3 @@
-output "sql_arn_id" {
-  value = aws_db_instance.sql_server.arn
-}
-
 output "eks_cluster_name"{
   value = module.eks.cluster_name
 }
