@@ -13,7 +13,7 @@ module "eks" {
     node_pools = ["general-purpose"]
   }
 
-  vpc_id     = aws_vpc.garage_flow_vpc.id
+  vpc_id = aws_vpc.garage_flow_vpc.id
   subnet_ids = [
     aws_subnet.garage_flow_subnet_az_a.id,
     aws_subnet.garage_flow_subnet_az_b.id,
