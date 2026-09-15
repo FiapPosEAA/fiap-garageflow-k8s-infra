@@ -1,26 +1,25 @@
 variable "aws_region" {
   type        = string
-  default     = "us-east-2"
   description = "Região da AWS"
 }
 
 variable "sql_db_name" {
-  default     = "garage-flow"
+  type        = string
   description = "Nome do banco de dados SQL Server"
 }
 
 variable "sql_db_user" {
-  default     = "garage_flow"
+  type        = string
   description = "Usuário padrão do banco"
 }
 
 variable "sql_db_password" {
   type        = string
+  sensitive   = true
   description = "Senha padrão do banco"
 }
 
 variable "cluster_name" {
-  description = "Name of the local Kubernetes cluster created with kind."
   type        = string
-  default     = "garageflow"
+  description = "Nome do cluster EKS"
 }
