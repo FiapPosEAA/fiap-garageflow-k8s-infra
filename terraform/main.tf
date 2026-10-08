@@ -77,7 +77,7 @@ resource "aws_subnet" "garage_flow_private_subnet_az_a" {
 
   tags = {
     "kubernetes.io/cluster/garage_flow_eks" = "owned"
-    "kubernetes.io/role/internal-elb"        = "1"
+    "kubernetes.io/role/internal-elb"       = "1"
   }
 }
 
@@ -89,7 +89,7 @@ resource "aws_subnet" "garage_flow_private_subnet_az_b" {
 
   tags = {
     "kubernetes.io/cluster/garage_flow_eks" = "owned"
-    "kubernetes.io/role/internal-elb"        = "1"
+    "kubernetes.io/role/internal-elb"       = "1"
   }
 }
 
