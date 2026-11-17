@@ -7,6 +7,8 @@ module "eks" {
 
   endpoint_public_access                   = true
   enable_cluster_creator_admin_permissions = true
+  # SCP da conta bloqueia iam:CreateOpenIDConnectProvider; pods usam o papel dos nós.
+  enable_irsa = false
 
   compute_config = {
     enabled    = true
