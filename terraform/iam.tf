@@ -3,12 +3,26 @@ locals {
     "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:garageflow-*-events",
   ]
   dynamodb_table_arn = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/garageflow-executions"
+  app_namespace      = "garage-flow-namespace"
 }
 
-# Pods use the AWS SDK default credential chain, which resolves to the node role.
-resource "aws_iam_role_policy" "nodes_messaging_and_data" {
+# Pods do EKS Auto Mode não alcançam o IMDS do nó; as credenciais vêm do EKS Pod Identity.
+resource "aws_iam_role" "app_pods" {
+  name = "garageflow-app-pods"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "app_pods_messaging_and_data" {
   name = "garageflow-sqs-dynamodb-access"
-  role = module.eks.node_iam_role_name
+  role = aws_iam_role.app_pods.name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -42,4 +56,12 @@ resource "aws_iam_role_policy" "nodes_messaging_and_data" {
       },
     ]
   })
+}
+
+# Os Deployments usam a service account default do namespace.
+resource "aws_eks_pod_identity_association" "app_default" {
+  cluster_name    = module.eks.cluster_name
+  namespace       = local.app_namespace
+  service_account = "default"
+  role_arn        = aws_iam_role.app_pods.arn
 }
