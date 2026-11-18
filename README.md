@@ -13,6 +13,7 @@ Projeto do Tech Challenge Fase 4 (FIAP Pós Tech): a oficina mecânica, antes um
 - [Estado remoto (S3)](#estado-remoto-s3)
 - [Manifests Kubernetes (`k8s/`)](#manifests-kubernetes-k8s)
 - [Pipelines](#pipelines)
+- [Observabilidade (Datadog)](#observabilidade-datadog)
 - [Como executar](#como-executar)
 - [Dependências e ordem de deploy](#dependências-e-ordem-de-deploy)
 - [Segurança](#segurança)
@@ -170,6 +171,33 @@ Workflows em [.github/workflows/](.github/workflows/).
 - **Passos:** checkout -> `setup-terraform` 1.10.5 -> `configure-aws-credentials` -> `terraform init` (chave `garage-flow/<env>/k8s.tfstate`) -> `terraform apply -auto-approve`. Sem `plan` separado; o `apply` **não** aplica manifests `k8s/`.
 - **Secrets (nomes):** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `TF_STATE_BUCKET`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (os três últimos viram `TF_VAR_sql_db_name`, `TF_VAR_sql_db_user`, `TF_VAR_sql_db_password`, variáveis sem uso real).
 - **Variables:** `AWS_REGION` (padrão `us-east-2`) e `EKS_CLUSTER_NAME` (padrão `garageflow`, que vira `TF_VAR_cluster_name`, sem uso real).
+
+## Observabilidade (Datadog)
+
+Opcional: sem o secret `DD_API_KEY`, o workflow `datadog.yml` termina com sucesso sem instalar nada e o cluster fica como está. Não há mudança no Terraform.
+
+- **O que é instalado:** chart Helm `datadog/datadog` (release `datadog`, namespace `datadog`) com os valores de [k8s/datadog/values.yaml](k8s/datadog/values.yaml): Agent (DaemonSet), Cluster Agent com Admission Controller, kube-state-metrics core, eventos do Kubernetes e Orchestrator Explorer.
+- **O que é coletado:** métricas de nós, pods e containers; logs de todos os containers (`containerCollectAll`); processos (process agent); traces APM dos serviços .NET.
+- **APM:** o Admission Controller (`mutateUnlabelled: false`) só altera pods com o label `admission.datadoghq.com/enabled: "true"` (os 4 deployments .NET já o têm) e injeta o tracer .NET definido na annotation `admission.datadoghq.com/dotnet-lib.version`. O envio de traces usa o modo `service` (Service local com `internalTrafficPolicy: Local`), sem `hostPort` e sem socket via `hostPath` nos pods das aplicações.
+- **EKS Auto Mode:** os nós são gerenciados (Bottlerocket, SELinux em modo enforcing). DaemonSets são suportados; o Agent roda com `seLinuxOptions.type: spc_t` para conseguir ler `/var/log/pods` e `/proc`, e `kubelet.tlsVerify: false` porque o certificado do kubelet não é assinado pela CA do cluster. Socket UDS/hostPort foram evitados por depender de acesso ao host nos pods das aplicações. System-probe (NPM/USM) fica desligado.
+- **Nome do cluster:** o Datadog aceita apenas `[a-z0-9-]`, então o cluster aparece como `garage-flow-eks`; o nome real vai na tag `eks_cluster:garage_flow_eks`.
+
+Como ligar:
+
+1. Criar uma API key no Datadog e cadastrá-la como **secret de organização `DD_API_KEY`** (FiapPosEAA, visível para este repo e para `fiap-garageflow-lambda-auth`).
+2. Opcional: variable `DD_SITE` (padrão `datadoghq.com`; ex.: `us5.datadoghq.com`, `datadoghq.eu`) e `DD_HELM_CHART_VERSION` para fixar a versão do chart.
+3. Rodar **Actions > Datadog Agent > Run workflow** (também dispara em push na `main` que altere `k8s/datadog/**`). O workflow cria o Secret `datadog-secret`, executa `helm upgrade --install` e reinicia os deployments com `tags.datadoghq.com/env=producao` para que o tracer seja injetado.
+4. Conferir: `kubectl -n datadog get pods` e, num pod de aplicação, o init container `datadog-lib-dotnet-init`.
+
+No vídeo: APM > Service Map; trace de `POST /work-orders` (HTTP + SQL) e spans `SendMessage` do SQS; Logs filtrados por `service:` e por trace; Infrastructure > Kubernetes (dashboard *Kubernetes - Overview*) e Containers/Processes.
+
+Limitações e riscos:
+
+- O Agent adiciona um pod por nó (~250 MiB de memória), o que pode fazer o Auto Mode criar nós maiores/adicionais (custo).
+- O init container baixa a imagem do tracer de um registry público do Datadog; se o pull falhar, o pod da aplicação fica em `Init` e o rollout do CD expira. Para desligar a injeção: `helm uninstall datadog -n datadog` e reiniciar os deployments.
+- O webhook usa `failurePolicy: Ignore`: se o Cluster Agent estiver fora, os pods sobem sem tracer.
+- Os serviços não se chamam via HTTP e não há consumidores SQS, então cada requisição gera um trace por serviço; não há propagação entre serviços.
+- Desinstalar: `helm uninstall datadog -n datadog && kubectl delete namespace datadog`.
 
 ## Como executar
 

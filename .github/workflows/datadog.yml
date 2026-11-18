@@ -1,0 +1,93 @@
+name: Datadog Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      restart_apps:
+        description: "Reiniciar os deployments do GarageFlow para injetar o tracer"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - "k8s/datadog/**"
+      - ".github/workflows/datadog.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: datadog-agent
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'garage_flow_eks' }}
+  DD_SITE: ${{ vars.DD_SITE || 'datadoghq.com' }}
+  DD_NAMESPACE: datadog
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: producao
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+        run: |
+          if [[ -n "$DD_API_KEY" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secret DD_API_KEY ausente: instalação do Datadog ignorada."
+          fi
+
+  deploy:
+    needs: check
+    if: needs.check.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: producao
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+      - run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+      - name: API key secret
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+        run: |
+          kubectl create namespace "$DD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "$DD_NAMESPACE" create secret generic datadog-secret \
+            --from-literal=api-key="$DD_API_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+      - name: Install/upgrade datadog/datadog chart
+        env:
+          CHART_VERSION: ${{ vars.DD_HELM_CHART_VERSION }}
+        run: |
+          helm repo add datadog https://helm.datadoghq.com
+          helm repo update datadog
+          VERSION_ARG=()
+          if [[ -n "$CHART_VERSION" ]]; then VERSION_ARG=(--version "$CHART_VERSION"); fi
+          helm upgrade --install datadog datadog/datadog \
+            --namespace "$DD_NAMESPACE" \
+            -f k8s/datadog/values.yaml \
+            --set datadog.site="$DD_SITE" \
+            "${VERSION_ARG[@]}" \
+            --wait --timeout 10m
+      - name: Restart instrumented apps
+        if: github.event_name == 'push' || inputs.restart_apps
+        run: |
+          # Só pods criados depois do Cluster Agent recebem a injeção do tracer.
+          kubectl -n garage-flow-namespace rollout restart deployment -l tags.datadoghq.com/env=producao || true
+      - name: Status
+        if: always()
+        run: |
+          kubectl -n "$DD_NAMESPACE" get pods -o wide || true
+          kubectl -n "$DD_NAMESPACE" get ds,deploy,svc || true
